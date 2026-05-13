@@ -1,0 +1,689 @@
+"use client";
+
+import { useState, useMemo, useEffect } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import {
+  ArrowLeft, FileText, Clock, CheckCircle, XCircle, Loader2,
+  Hash, User, Calendar, MapPin, Briefcase, MessageSquare,
+  Download, Eye, ChevronRight, Home, AlertCircle, Shield,
+  Printer, X, Bell, BellDot, Check, ExternalLink, Edit3,
+} from "lucide-react";
+import { useAuth } from "@/core/context/AuthContext";
+import { useServiceData } from "@/core/context/ServiceDataContext";
+import { StatusBadge } from "@/components/ui";
+import { formatTanggal, hitungUmur } from "@/core/utils/helpers";
+import Timeline from "@/components/ui/Timeline";
+import FileUpload from "@/components/ui/FileUpload";
+import { get, upload as apiUpload } from "@/core/api/client";
+import type { StatusPengajuan, Notifikasi, PengajuanSurat } from "@/core/types";
+
+const STATUS_STYLE: Record<StatusPengajuan, { variant: "success" | "warning" | "danger" | "info"; color: string; icon: typeof Clock }> = {
+  Menunggu: { variant: "warning", color: "#d97706", icon: Clock },
+  Diproses: { variant: "info", color: "#2563eb", icon: Loader2 },
+  Selesai: { variant: "success", color: "#16a34a", icon: CheckCircle },
+  Ditolak: { variant: "danger", color: "#dc2626", icon: XCircle },
+};
+
+function getTimelineSteps(status: StatusPengajuan) {
+  const isDitolak = status === "Ditolak";
+  const steps = [
+    { label: "Pengajuan Diterima", desc: "Pengajuan masuk dan menunggu verifikasi petugas desa.", status: "Menunggu" },
+    { label: "Sedang Diverifikasi", desc: "Berkas sedang dicek dan diverifikasi oleh staf layanan.", status: "Diproses" },
+    { label: "Surat Selesai", desc: "Surat telah selesai dan siap diambil di kantor desa.", status: "Selesai" },
+  ];
+  const currentIdx = isDitolak ? 1 : steps.findIndex((s) => s.status === status);
+  return steps.map((s, i) => ({
+    label: isDitolak && i === 1 ? "Ditolak" : s.label,
+    desc: isDitolak && i === 1 ? "Pengajuan ditolak oleh petugas desa." : s.desc,
+    status: isDitolak && i === 1
+      ? "rejected" as const
+      : !isDitolak && i < currentIdx
+        ? "done" as const
+        : !isDitolak && i === currentIdx
+          ? (status === "Selesai" ? "done" as const : "active" as const)
+          : "pending" as const,
+  }));
+}
+
+export default function DetailPengajuanPage() {
+  const params = useParams();
+  const { user, kk } = useAuth();
+  const {
+    getSuratForUser, getNotifikasiForUser,
+    addBerkasToPengajuan, markAsRead, refreshSurat,
+  } = useServiceData();
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [showPreviewSurat, setShowPreviewSurat] = useState(false);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [freshSurat, setFreshSurat] = useState<PengajuanSurat | null>(null);
+
+  const riwayatSurat = getSuratForUser(user?.role || "warga", user?.nik);
+  const notifikasi = getNotifikasiForUser(user?.role || "warga", user?.nik, user?.id);
+  const suratFromList = riwayatSurat.find((s) => s.id === params.id);
+  const surat = freshSurat ?? suratFromList ?? null;
+
+  // Fix #4: Fetch data surat terbaru langsung dari backend
+  useEffect(() => {
+    if (!params.id) return;
+    get<{ success: boolean; data?: PengajuanSurat }>(`/warga/surat/${params.id}`)
+      .then(res => {
+        if (res.success && res.data) setFreshSurat(res.data);
+      })
+      .catch(() => { /* fallback ke data dari list */ });
+  }, [params.id]);
+
+  // Filter notifications related to this pengajuan
+  const relatedNotif = useMemo(() => {
+    if (!surat) return [];
+    return notifikasi.filter(
+      (n) => n.link?.includes(surat.id) || n.pesan?.includes(surat.nomor_tiket)
+    );
+  }, [surat, notifikasi]);
+
+  const unreadRelated = relatedNotif.filter((n) => !n.dibaca).length;
+
+  if (!surat) {
+    return (
+      <div className="p-4 lg:p-8 max-w-4xl mx-auto">
+        <div className="govt-card p-12 text-center">
+          <AlertCircle size={40} className="mx-auto mb-3 opacity-20" style={{ color: "var(--foreground)" }} />
+          <p className="text-sm font-bold opacity-50">Pengajuan tidak ditemukan.</p>
+          <Link href="/warga/riwayat" className="inline-flex items-center gap-2 mt-4 text-xs font-bold" style={{ color: "var(--primary)" }}>
+            <ArrowLeft size={14} /> Kembali ke Riwayat
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const st = STATUS_STYLE[surat.status];
+  const isMinorPemohon = hitungUmur(surat.pemohon.tanggal_lahir) < 17;
+  const isDiwakili = surat.diajukan_oleh.nik !== surat.pemohon.nik;
+  // kk from useAuth()
+
+  const handleDownloadFile = (filename: string) => {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api$/, "") || "http://localhost:8000";
+    window.open(`${apiBase}/storage/${filename}`, "_blank");
+  };
+
+  const handleDownloadSurat = () => {
+    // Surat file is generated by backend when status is Selesai
+    if (surat.file_surat) {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api$/, "") || "http://localhost:8000";
+      window.open(`${apiBase}/storage/${surat.file_surat}`, "_blank");
+    } else {
+      alert("Dokumen surat belum tersedia. Surat akan tersedia setelah diproses oleh petugas.");
+    }
+  };
+
+  const handlePrintPreview = () => {
+    const w = window.open("", "_blank", "width=800,height=600");
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html><head><title>${surat.jenis_surat_label}</title>
+<style>
+body{font-family:Georgia,serif;max-width:700px;margin:40px auto;padding:20px;color:#1a3a6e}
+.header{text-align:center;border-bottom:3px double #1a3a6e;padding-bottom:15px;margin-bottom:25px}
+.header h1{font-size:16px;margin:5px 0;text-transform:uppercase;letter-spacing:2px}
+.header p{font-size:11px;color:#666;margin:2px 0}
+.kop{font-size:18px;font-weight:bold;letter-spacing:3px}
+.content{font-size:13px;line-height:1.8}
+.field{display:flex;margin:6px 0}
+.field-label{width:180px;font-weight:bold;flex-shrink:0}
+.field-sep{width:20px;text-align:center}
+.footer{margin-top:40px;text-align:right;font-size:12px}
+.stamp{margin-top:60px;font-size:11px;color:#999;text-align:center}
+.minor-note{background:#fef3c7;border:1px solid #fde68a;border-radius:4px;padding:8px 12px;font-size:11px;color:#92400e;margin:10px 0}
+.status-badge{display:inline-block;padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold}
+@media print{body{margin:20px}}
+</style></head><body>
+<div class="header">
+<p class="kop">PEMERINTAH KABUPATEN SRAGEN</p>
+<p style="font-size:12px">KECAMATAN TANON</p>
+<h1>DESA KARANGTALUN</h1>
+<p>Jl. Raya Tanon-Masaran Km. 2, Karangtalun, Tanon, Sragen 57277</p>
+</div>
+<div class="content">
+<h2 style="text-align:center;font-size:15px;text-decoration:underline;letter-spacing:1px;margin-bottom:20px">${surat.jenis_surat_label.toUpperCase()}</h2>
+<p style="text-align:center;font-size:12px;color:#888;margin-top:-15px;margin-bottom:20px">Nomor: ${surat.nomor_surat || "......./......./KT/......./2025"}</p>
+<p style="text-align:center;margin-bottom:15px"><span class="status-badge" style="background:${st.color}20;color:${st.color}">Status: ${surat.status}</span></p>
+<p>Yang bertanda tangan di bawah ini, Kepala Desa Karangtalun, Kecamatan Tanon, Kabupaten Sragen, menerangkan bahwa:</p>
+<div style="margin:15px 0 15px 20px">
+<div class="field"><span class="field-label">Nama</span><span class="field-sep">:</span><span>${surat.pemohon.nama_lengkap}</span></div>
+<div class="field"><span class="field-label">NIK</span><span class="field-sep">:</span><span>${surat.pemohon.nik}</span></div>
+<div class="field"><span class="field-label">Tempat/Tgl Lahir</span><span class="field-sep">:</span><span>${surat.pemohon.tempat_lahir}, ${new Date(surat.pemohon.tanggal_lahir).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span></div>
+<div class="field"><span class="field-label">Jenis Kelamin</span><span class="field-sep">:</span><span>${surat.pemohon.jenis_kelamin}</span></div>
+<div class="field"><span class="field-label">Pekerjaan</span><span class="field-sep">:</span><span>${surat.pemohon.pekerjaan}</span></div>
+<div class="field"><span class="field-label">Alamat</span><span class="field-sep">:</span><span>${surat.pemohon.alamat}</span></div>
+</div>
+${isDiwakili ? `<div class="minor-note">\u26A0 ${isMinorPemohon ? `Pemohon di bawah umur (${hitungUmur(surat.pemohon.tanggal_lahir)} tahun). ` : ""}Surat diajukan oleh: <strong>${surat.diajukan_oleh.nama_lengkap}</strong> (NIK: ${surat.diajukan_oleh.nik}).</div>` : ""}
+<p><strong>Keperluan:</strong> ${surat.keperluan}</p>
+${surat.catatan_admin ? `<p><strong>Catatan Petugas:</strong> ${surat.catatan_admin}</p>` : ""}
+<p>Demikian surat keterangan ini dibuat untuk dapat dipergunakan sebagaimana mestinya.</p>
+</div>
+<div class="footer">
+<p>Karangtalun, ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</p>
+<p style="margin-top:5px">Kepala Desa Karangtalun</p>
+<p style="margin-top:50px;font-weight:bold;text-decoration:underline">Budi Santoso, S.IP.</p>
+<p style="font-size:11px;color:#888">NIP. 19751012 200501 1 004</p>
+</div>
+<div class="stamp">\u2014 DOKUMEN CETAK SISTEM E-SURAT DESA KARANGTALUN \u2014</div>
+</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 500);
+  };
+
+  return (
+    <div className="p-4 lg:p-8 max-w-4xl mx-auto">
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1.5 text-[11px] mb-5" style={{ color: "var(--foreground)" }}>
+        <Link href="/warga/dashboard" className="flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity">
+          <Home size={11} /> Dashboard
+        </Link>
+        <ChevronRight size={10} className="opacity-30" />
+        <Link href="/warga/riwayat" className="opacity-50 hover:opacity-100 transition-opacity">Riwayat Pengajuan</Link>
+        <ChevronRight size={10} className="opacity-30" />
+        <span className="font-bold" style={{ color: "var(--primary)" }}>Preview / Notifikasi</span>
+      </nav>
+
+      {/* Back + Notif */}
+      <div className="flex items-center justify-between mb-4">
+        <Link href="/warga/riwayat" className="inline-flex items-center gap-1.5 text-xs font-bold transition-colors"
+          style={{ color: "var(--primary)" }}>
+          <ArrowLeft size={14} /> Kembali ke Riwayat
+        </Link>
+        <button onClick={() => setShowNotifPanel(true)}
+          className="relative flex items-center gap-1.5 px-3 py-2 rounded text-xs font-bold transition-colors"
+          style={{ background: "var(--surface-hover)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+          {unreadRelated > 0 ? <BellDot size={14} style={{ color: "#dc2626" }} /> : <Bell size={14} />}
+          Notifikasi
+          {unreadRelated > 0 && (
+            <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+              style={{ background: "#dc2626", color: "#fff" }}>{unreadRelated}</span>
+          )}
+        </button>
+      </div>
+
+      {/* Header Card */}
+      <div className="govt-card overflow-hidden mb-4">
+        <div className="px-5 py-4 flex flex-wrap items-center gap-4" style={{ background: `${st.color}10` }}>
+          <div className="w-12 h-12 rounded flex items-center justify-center shrink-0"
+            style={{ background: `${st.color}20`, color: st.color }}>
+            <st.icon size={22} className={surat.status === "Diproses" ? "animate-spin" : ""} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-black" style={{ color: "var(--foreground)" }}>{surat.jenis_surat_label}</h1>
+            <p className="text-xs opacity-60 mt-0.5">{surat.nomor_tiket}{surat.nomor_surat ? ` · ${surat.nomor_surat}` : ""}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowPreviewSurat(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded text-[11px] font-bold transition-colors"
+              style={{ background: "var(--surface)", color: "var(--primary)", border: "1px solid var(--border)" }}>
+              <Eye size={12} /> Preview
+            </button>
+            <StatusBadge label={surat.status} variant={st.variant} size="md" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* ── Main Content ── */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Timeline */}
+          <div className="govt-card p-5">
+            <h3 className="text-xs font-bold uppercase tracking-wider mb-4 opacity-60">Status Pengajuan</h3>
+            <Timeline steps={getTimelineSteps(surat.status)} variant="vertical" />
+          </div>
+
+          {/* Pemohon Info */}
+          <div className="govt-card p-5">
+            <h3 className="text-xs font-bold uppercase tracking-wider mb-4 opacity-60">Informasi Pemohon</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+              <DetailField label="Nama Pemohon" value={surat.pemohon.nama_lengkap} />
+              <DetailField label="NIK" value={surat.pemohon.nik} mono />
+              {isDiwakili && (
+                <div className="sm:col-span-2 p-3 rounded flex items-center gap-2"
+                  style={{ background: "#fef3c7", border: "1px solid #fde68a" }}>
+                  <Shield size={14} style={{ color: "#92400e" }} />
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#92400e" }}>
+                      {isMinorPemohon ? `Pemohon di bawah umur (${hitungUmur(surat.pemohon.tanggal_lahir)} thn) — diwakili oleh:` : "Diajukan oleh wakil:"}
+                    </p>
+                    <p className="text-xs font-bold" style={{ color: "#78350f" }}>
+                      {surat.diajukan_oleh.nama_lengkap} (NIK: {surat.diajukan_oleh.nik})
+                    </p>
+                  </div>
+                </div>
+              )}
+              <DetailField label="Tempat/Tgl Lahir" value={`${surat.pemohon.tempat_lahir}, ${formatTanggal(surat.pemohon.tanggal_lahir)}`} />
+              <DetailField label="Jenis Kelamin" value={surat.pemohon.jenis_kelamin} />
+              <DetailField label="Pekerjaan" value={surat.pemohon.pekerjaan} />
+              <DetailField label="Status Hubungan" value={surat.pemohon.status_hubungan} />
+              <div className="sm:col-span-2">
+                <DetailField label="Alamat" value={surat.pemohon.alamat} />
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 rounded" style={{ background: "var(--surface-hover)" }}>
+              <p className="text-[10px] font-bold uppercase tracking-wider opacity-50 mb-1">Keperluan</p>
+              <p className="text-xs" style={{ color: "var(--foreground)" }}>{surat.keperluan}</p>
+            </div>
+
+            {surat.catatan_admin && (
+              <div className="mt-3 p-3 rounded flex items-start gap-2"
+                style={{
+                  background: surat.status === "Ditolak" ? "#fee2e2" : "#dbeafe",
+                  border: `1px solid ${surat.status === "Ditolak" ? "#fca5a5" : "#93c5fd"}`,
+                }}>
+                <MessageSquare size={14} className="shrink-0 mt-0.5"
+                  style={{ color: surat.status === "Ditolak" ? "#dc2626" : "#2563eb" }} />
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
+                    style={{ color: surat.status === "Ditolak" ? "#991b1b" : "#1e40af" }}>
+                    Catatan dari Petugas Desa
+                  </p>
+                  <p className="text-xs" style={{ color: surat.status === "Ditolak" ? "#991b1b" : "#1e40af" }}>
+                    {surat.catatan_admin}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Files */}
+          <div className="govt-card p-5">
+            <h3 className="text-xs font-bold uppercase tracking-wider mb-4 opacity-60">Berkas Lampiran</h3>
+            <FileUpload
+              files={surat.berkas_lampiran || []}
+              onUpload={(f) => addBerkasToPengajuan(surat.id, f)}
+              onFileSelect={async (file) => {
+                try {
+                  const fd = new FormData();
+                  fd.append("berkas", file);
+                  const res = await apiUpload<{ success: boolean; data?: { filename: string } }>(
+                    `/warga/surat/${surat.id}/berkas`, fd
+                  );
+                  if (res.success) {
+                    refreshSurat();
+                    setFreshSurat(null); // force re-fetch
+                    get<{ success: boolean; data?: PengajuanSurat }>(`/warga/surat/${surat.id}`)
+                      .then(r => { if (r.success && r.data) setFreshSurat(r.data); })
+                      .catch(() => {});
+                  }
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : "Gagal upload berkas.");
+                }
+              }}
+              onRemove={undefined}
+              onPreview={(f) => setPreviewFile(f)}
+              onDownload={(f) => handleDownloadFile(f)}
+              disabled={surat.status === "Selesai" || surat.status === "Ditolak"}
+              label="Klik atau seret file untuk upload"
+            />
+          </div>
+        </div>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-4">
+          {/* Detail Info */}
+          <div className="govt-card overflow-hidden">
+            <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor: "var(--border)" }}>
+              <Hash size={14} style={{ color: "var(--accent)" }} />
+              <h3 className="text-xs font-bold uppercase tracking-wider">Detail Pengajuan</h3>
+            </div>
+            <div className="p-5 space-y-3">
+              <SideField label="Nomor Tiket" value={surat.nomor_tiket} mono />
+              {surat.nomor_surat && <SideField label="Nomor Surat" value={surat.nomor_surat} />}
+              <SideField label="Jenis Surat" value={surat.jenis_surat_label} />
+              <SideField label="Tanggal Pengajuan" value={formatTanggal(surat.tanggal_pengajuan)} />
+              <SideField label="Terakhir Update" value={formatTanggal(surat.tanggal_diperbarui)} />
+            </div>
+          </div>
+
+          {/* Preview + Download Actions */}
+          <div className="govt-card overflow-hidden">
+            <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor: "var(--border)" }}>
+              <Eye size={14} style={{ color: "var(--accent)" }} />
+              <h3 className="text-xs font-bold uppercase tracking-wider">Aksi Surat</h3>
+            </div>
+            <div className="p-5 space-y-2">
+              <button onClick={() => setShowPreviewSurat(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold transition-colors"
+                style={{ background: "var(--surface-hover)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+                <Eye size={13} /> Preview Surat
+              </button>
+              <button onClick={handlePrintPreview}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold transition-colors"
+                style={{ background: "var(--surface-hover)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+                <Printer size={13} /> Print Preview
+              </button>
+              <button onClick={handleDownloadSurat}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold transition-colors"
+                style={{ background: "var(--surface-hover)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+                <Download size={13} /> Unduh Dokumen
+              </button>
+              {(surat.status === "Menunggu" || surat.status === "Diproses") && (
+                <Link href="/warga/e-surat"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold"
+                  style={{ background: "var(--accent-light)", color: "var(--accent)", border: "1px solid var(--border)" }}>
+                  <Edit3 size={13} /> Edit Pengajuan
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {/* Download Final */}
+          {surat.status === "Selesai" && (
+            <div className="govt-card overflow-hidden">
+              <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor: "var(--border)" }}>
+                <Download size={14} style={{ color: "#16a34a" }} />
+                <h3 className="text-xs font-bold uppercase tracking-wider">Surat Selesai</h3>
+              </div>
+              <div className="p-5">
+                <p className="text-[11px] opacity-50 mb-3">Surat selesai diproses. Anda dapat mengunduh salinan digital.</p>
+                <button onClick={handleDownloadSurat}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold"
+                  style={{ background: "#16a34a", color: "#fff" }}>
+                  <Download size={14} /> Unduh Surat Resmi
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Notif Summary */}
+          {relatedNotif.length > 0 && (
+            <div className="govt-card overflow-hidden">
+              <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+                <div className="flex items-center gap-2">
+                  <Bell size={14} style={{ color: "var(--accent)" }} />
+                  <h3 className="text-xs font-bold uppercase tracking-wider">Notifikasi Terkait</h3>
+                </div>
+                {unreadRelated > 0 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#fee2e2", color: "#dc2626" }}>
+                    {unreadRelated} baru
+                  </span>
+                )}
+              </div>
+              <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                {relatedNotif.slice(0, 3).map((n) => (
+                  <div key={n.id} className="px-5 py-3 flex items-start gap-2"
+                    style={{ opacity: n.dibaca ? 0.6 : 1 }}>
+                    <div className="w-2 h-2 rounded-full mt-1.5 shrink-0"
+                      style={{ background: n.dibaca ? "transparent" : "#dc2626" }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold truncate">{n.judul}</p>
+                      <p className="text-[10px] opacity-50 truncate">{n.pesan}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {relatedNotif.length > 3 && (
+                <button onClick={() => setShowNotifPanel(true)}
+                  className="w-full px-5 py-2.5 text-[11px] font-bold text-center transition-colors"
+                  style={{ color: "var(--primary)", background: "var(--surface-hover)" }}>
+                  Lihat semua ({relatedNotif.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ PREVIEW SURAT MODAL ═══ */}
+      {showPreviewSurat && (
+        <>
+          <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.6)" }} onClick={() => setShowPreviewSurat(false)} />
+          <div className="fixed top-4 bottom-4 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-2xl rounded-lg shadow-2xl overflow-y-auto"
+            style={{ background: "var(--surface)" }}>
+            {/* Modal header */}
+            <div className="sticky top-0 z-10 px-5 py-3 border-b flex items-center justify-between"
+              style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+              <div className="flex items-center gap-2">
+                <Eye size={14} style={{ color: "var(--accent)" }} />
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--accent)" }}>Preview Surat</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge label={surat.status} variant={st.variant} size="sm" />
+                <button onClick={() => setShowPreviewSurat(false)}>
+                  <X size={18} style={{ color: "var(--foreground)", opacity: 0.4 }} />
+                </button>
+              </div>
+            </div>
+
+            {/* KOP */}
+            <div className="px-6 pt-6 pb-4 text-center border-b" style={{ borderColor: "var(--border)" }}>
+              <p className="text-[10px] uppercase tracking-[3px] opacity-50">Pemerintah Kabupaten Sragen · Kecamatan Tanon</p>
+              <h2 className="text-base font-black uppercase tracking-wider mt-1" style={{ fontFamily: "var(--font-display)", color: "var(--primary)" }}>
+                Desa Karangtalun
+              </h2>
+              <p className="text-[10px] opacity-40 mt-0.5">Jl. Raya Tanon-Masaran Km. 2, Karangtalun, Tanon, Sragen 57277</p>
+              <div className="w-full h-0.5 mt-3" style={{ background: "var(--primary)" }} />
+              <div className="w-full h-px mt-0.5" style={{ background: "var(--primary)", opacity: 0.3 }} />
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              <h3 className="text-center text-sm font-bold underline underline-offset-4 uppercase tracking-wider mb-1">{surat.jenis_surat_label}</h3>
+              <p className="text-center text-[10px] opacity-40 mb-6">
+                Nomor: {surat.nomor_surat || "......./......./KT/......./2025"}
+              </p>
+
+              <div className="space-y-2 text-sm mb-5">
+                {[
+                  { label: "Nama", value: surat.pemohon.nama_lengkap },
+                  { label: "NIK", value: surat.pemohon.nik },
+                  { label: "Tempat/Tgl Lahir", value: `${surat.pemohon.tempat_lahir}, ${formatTanggal(surat.pemohon.tanggal_lahir)}` },
+                  { label: "Jenis Kelamin", value: surat.pemohon.jenis_kelamin },
+                  { label: "Pekerjaan", value: surat.pemohon.pekerjaan },
+                  { label: "Alamat", value: surat.pemohon.alamat },
+                ].map((f) => (
+                  <div key={f.label} className="flex gap-2">
+                    <span className="w-36 shrink-0 font-bold opacity-60">{f.label}</span>
+                    <span className="opacity-40">:</span>
+                    <span>{f.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {isDiwakili && (
+                <div className="p-3 rounded flex items-center gap-2 mb-4" style={{ background: "#fef3c7", border: "1px solid #fde68a" }}>
+                  <Shield size={14} style={{ color: "#92400e" }} />
+                  <p className="text-xs" style={{ color: "#78350f" }}>
+                    <strong>Diajukan oleh:</strong> {surat.diajukan_oleh.nama_lengkap}
+                    {isMinorPemohon && " — pemohon di bawah umur"}
+                  </p>
+                </div>
+              )}
+
+              <div className="p-3 rounded mb-4" style={{ background: "var(--surface-hover)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50 mb-1">Keperluan</p>
+                <p className="text-sm">{surat.keperluan}</p>
+              </div>
+
+              <div className="p-3 rounded mb-4" style={{ background: "var(--surface-hover)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50 mb-1">Tanggal Pengajuan</p>
+                <p className="text-sm">{formatTanggal(surat.tanggal_pengajuan)}</p>
+              </div>
+
+              <div className="p-3 rounded mb-4" style={{ background: "var(--surface-hover)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50 mb-1">Status</p>
+                <StatusBadge label={surat.status} variant={st.variant} size="md" />
+              </div>
+
+              {surat.catatan_admin && (
+                <div className="p-3 rounded mb-4 flex items-start gap-2"
+                  style={{ background: surat.status === "Ditolak" ? "#fee2e2" : "#dbeafe", border: `1px solid ${surat.status === "Ditolak" ? "#fca5a5" : "#93c5fd"}` }}>
+                  <MessageSquare size={13} className="shrink-0 mt-0.5" style={{ color: surat.status === "Ditolak" ? "#dc2626" : "#2563eb" }} />
+                  <div>
+                    <p className="text-[10px] font-bold" style={{ color: surat.status === "Ditolak" ? "#991b1b" : "#1e40af" }}>Catatan Petugas</p>
+                    <p className="text-xs" style={{ color: surat.status === "Ditolak" ? "#991b1b" : "#1e40af" }}>{surat.catatan_admin}</p>
+                  </div>
+                </div>
+              )}
+
+              {(surat.berkas_lampiran?.length || 0) > 0 && (
+                <div className="mb-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider opacity-50 mb-2">Berkas ({surat.berkas_lampiran!.length})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {surat.berkas_lampiran!.map((f, i) => (
+                      <span key={i} className="text-[11px] font-medium px-2 py-1 rounded flex items-center gap-1"
+                        style={{ background: "var(--accent-light)", color: "var(--accent)" }}>
+                        <FileText size={10} /> {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal footer actions */}
+            <div className="sticky bottom-0 px-5 py-4 border-t flex flex-wrap items-center justify-between gap-3"
+              style={{ borderColor: "var(--border)", background: "var(--surface-hover)" }}>
+              <div className="flex items-center gap-2">
+                <button onClick={handlePrintPreview}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded text-[11px] font-bold"
+                  style={{ background: "var(--surface)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+                  <Printer size={12} /> Print Preview
+                </button>
+                <button onClick={handleDownloadSurat}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded text-[11px] font-bold"
+                  style={{ background: "var(--surface)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
+                  <Download size={12} /> Unduh Dokumen
+                </button>
+              </div>
+              {(surat.status === "Menunggu" || surat.status === "Diproses") && (
+                <Link href="/warga/e-surat" onClick={() => setShowPreviewSurat(false)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded text-[11px] font-bold"
+                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                  <Edit3 size={12} /> Edit Pengajuan
+                </Link>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ═══ NOTIFICATION PANEL (SIDEBAR MODAL) ═══ */}
+      {showNotifPanel && (
+        <>
+          <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.4)" }} onClick={() => setShowNotifPanel(false)} />
+          <div className="fixed top-0 right-0 bottom-0 z-50 w-[90%] max-w-sm shadow-2xl overflow-y-auto"
+            style={{ background: "var(--surface)" }}>
+            <div className="sticky top-0 z-10 px-5 py-4 border-b flex items-center justify-between"
+              style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+              <div className="flex items-center gap-2">
+                <Bell size={14} style={{ color: "var(--primary)" }} />
+                <h3 className="text-sm font-bold">Notifikasi Pengajuan</h3>
+              </div>
+              <button onClick={() => setShowNotifPanel(false)}>
+                <X size={18} style={{ color: "var(--foreground)", opacity: 0.4 }} />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: "var(--border)", background: "var(--surface-hover)" }}>
+              <p className="text-[11px] opacity-50">{relatedNotif.length} notifikasi · {unreadRelated} belum dibaca</p>
+              {unreadRelated > 0 && (
+                <button onClick={() => relatedNotif.forEach((n) => !n.dibaca && markAsRead(n.id))}
+                  className="text-[11px] font-bold" style={{ color: "var(--primary)" }}>
+                  Tandai semua dibaca
+                </button>
+              )}
+            </div>
+
+            <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+              {relatedNotif.length === 0 ? (
+                <div className="p-8 text-center">
+                  <Bell size={28} className="mx-auto mb-2 opacity-15" />
+                  <p className="text-xs opacity-40">Belum ada notifikasi untuk pengajuan ini.</p>
+                </div>
+              ) : (
+                relatedNotif.map((n) => {
+                  const notifIcon = n.tipe === "surat_selesai" ? { icon: CheckCircle, color: "#16a34a", bg: "#dcfce7" }
+                    : n.tipe === "surat_ditolak" ? { icon: XCircle, color: "#dc2626", bg: "#fee2e2" }
+                    : n.tipe === "surat_diproses" ? { icon: Loader2, color: "#2563eb", bg: "#dbeafe" }
+                    : { icon: Bell, color: "#d97706", bg: "#fef3c7" };
+                  return (
+                    <div key={n.id} className="px-5 py-4 flex items-start gap-3 transition-colors"
+                      style={{ background: n.dibaca ? "transparent" : "var(--accent-light)" }}>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                        style={{ background: notifIcon.bg, color: notifIcon.color }}>
+                        <notifIcon.icon size={14} className={n.tipe === "surat_diproses" && !n.dibaca ? "animate-spin" : ""} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-xs font-bold truncate" style={{ color: "var(--foreground)" }}>{n.judul}</p>
+                          {!n.dibaca && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "#dc2626" }} />}
+                        </div>
+                        <p className="text-[11px] opacity-60 line-clamp-2">{n.pesan}</p>
+                        <div className="flex items-center justify-between mt-2">
+                          <p className="text-[10px] opacity-30">
+                            {new Date(n.tanggal).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                            {" · "}
+                            {new Date(n.tanggal).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                          {!n.dibaca && (
+                            <button onClick={() => markAsRead(n.id)}
+                              className="text-[10px] font-bold flex items-center gap-1" style={{ color: "var(--primary)" }}>
+                              <Check size={10} /> Tandai dibaca
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ═══ FILE PREVIEW MODAL ═══ */}
+      {previewFile && (
+        <>
+          <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setPreviewFile(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[90%] max-w-lg rounded-lg shadow-2xl overflow-hidden"
+            style={{ background: "var(--surface)" }}>
+            <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+              <h3 className="text-sm font-bold truncate">{previewFile}</h3>
+              <button onClick={() => setPreviewFile(null)}>
+                <X size={18} style={{ color: "var(--foreground)", opacity: 0.4 }} />
+              </button>
+            </div>
+            <div className="p-8 text-center">
+              <div className="w-20 h-20 rounded-lg mx-auto mb-4 flex items-center justify-center" style={{ background: "var(--surface-hover)" }}>
+                <FileText size={32} className="opacity-30" />
+              </div>
+              <p className="text-xs font-bold mb-1">Preview Surat</p>
+              <p className="text-[11px] opacity-40 mb-4">Pada implementasi nyata, file ditampilkan di viewer.</p>
+              <button onClick={() => { handleDownloadFile(previewFile); setPreviewFile(null); }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded text-xs font-bold"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                <Download size={13} /> Download
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DetailField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider opacity-40 mb-1">{label}</p>
+      <p className={`text-sm font-medium ${mono ? "font-mono text-xs" : ""}`} style={{ color: "var(--foreground)" }}>{value}</p>
+    </div>
+  );
+}
+
+function SideField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider opacity-40 mb-1">{label}</p>
+      <p className={`text-sm font-bold ${mono ? "font-mono text-xs" : ""}`} style={{ color: "var(--foreground)" }}>{value}</p>
+    </div>
+  );
+}

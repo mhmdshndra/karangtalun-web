@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── DESIGN SYSTEM: Formal Indonesian Government Aesthetic ─── */
+/* Palette: Deep Navy + Warm Gold + Slate — clean, institutional, trustworthy */
+
+:root {
+  /* Core colors - LIGHT MODE: warmer, higher contrast, not washed out */
+  --background: #f4f2ec;
+  --foreground: #1b1f2a;
+  --surface: #ffffff;
+  --surface-hover: #ece9e0;
+  --border: #cdc8bb;
+  --border-hover: #a9a292;
+
+  /* Muted text */
+  --text-muted: #5c5f6a;
+  --text-subtle: #7a7d87;
+
+  /* Brand */
+  --primary: #1a3a6e;
+  --primary-hover: #142d58;
+  --primary-foreground: #ffffff;
+  --accent: #9e7509;
+  --accent-hover: #86640a;
+  --accent-light: #f2e5c0;
+
+  /* Status */
+  --success: #166534;
+  --success-bg: #dcfce7;
+  --warning: #92400e;
+  --warning-bg: #fef3c7;
+  --danger: #991b1b;
+  --danger-bg: #fee2e2;
+  --info: #1e40af;
+  --info-bg: #dbeafe;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(27, 31, 42, 0.06), 0 1px 2px rgba(27, 31, 42, 0.04);
+  --shadow-md: 0 4px 12px rgba(27, 31, 42, 0.08), 0 2px 4px rgba(27, 31, 42, 0.04);
+  --shadow-lg: 0 8px 24px rgba(27, 31, 42, 0.1), 0 4px 8px rgba(27, 31, 42, 0.05);
+
+  /* Typography */
+  --font-display: 'Georgia', 'Times New Roman', serif;
+  --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Courier New', monospace;
+
+  /* Navbar */
+  --navbar-bg: rgba(255, 255, 255, 0.97);
+  --navbar-border: #cdc8bb;
+  --navbar-shadow: 0 1px 4px rgba(27, 31, 42, 0.08);
+}
+
+[data-theme="dark"] {
+  --background: #111318;
+  --foreground: #e4e1d9;
+  --surface: #1a1d24;
+  --surface-hover: #23262f;
+  --border: #2f3241;
+  --border-hover: #3e4255;
+
+  --text-muted: #9b9da6;
+  --text-subtle: #74767e;
+
+  --primary: #5a8cc8;
+  --primary-hover: #6a9cd8;
+  --primary-foreground: #ffffff;
+  --accent: #d4a31a;
+  --accent-hover: #e0b02a;
+  --accent-light: #2a2210;
+
+  --success: #4ade80;
+  --success-bg: rgba(74, 222, 128, 0.12);
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.12);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --info: #60a5fa;
+  --info-bg: rgba(96, 165, 250, 0.12);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
+
+  --navbar-bg: rgba(26, 29, 36, 0.97);
+  --navbar-border: #2f3241;
+  --navbar-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── BASE ─── */
+* { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ─── TAILWIND UTILITY MAPPING ─── */
+@layer utilities {
+  .bg-background { background-color: var(--background); }
+  .bg-surface { background-color: var(--surface); }
+  .bg-surface-hover { background-color: var(--surface-hover); }
+  .bg-primary { background-color: var(--primary); }
+  .bg-accent { background-color: var(--accent); }
+  .bg-accent-light { background-color: var(--accent-light); }
+
+  .text-foreground { color: var(--foreground); }
+  .text-primary { color: var(--primary); }
+  .text-accent { color: var(--accent); }
+  .text-primary-foreground { color: var(--primary-foreground); }
+  .text-muted { color: var(--text-muted); }
+
+  .border-border { border-color: var(--border); }
+  .border-primary { border-color: var(--primary); }
+
+  .font-display { font-family: var(--font-display); }
+
+  /* Reveal animation */
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+  .reveal.active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Breadcrumb style */
+  .breadcrumb-bar {
+    background: linear-gradient(135deg, var(--primary) 0%, #0f2447 100%);
+  }
+
+  /* Government card style */
+  .govt-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .govt-card:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+  }
+
+  /* Floating buttons — safe area + proportional */
+  .floating-container {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.375rem;
+  }
+  @media (min-width: 640px) {
+    .floating-container {
+      bottom: 1.5rem;
+      right: 1.5rem;
+    }
+  }
+}
+
+/* ─── AUTH MOSAIC BACKGROUND ─── */
+@keyframes auth-mosaic-shift {
+  0%, 100% { opacity: 1; }
+  33% { opacity: 0; }
+  66% { opacity: 0; }
+}
+@keyframes auth-mosaic-shift-2 {
+  0%, 100% { opacity: 0; }
+  33% { opacity: 1; }
+  66% { opacity: 0; }
+}
+@keyframes auth-mosaic-shift-3 {
+  0%, 100% { opacity: 0; }
+  33% { opacity: 0; }
+  66% { opacity: 1; }
+}
+
+.auth-mosaic-photo {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  transition: opacity 2s ease-in-out;
+}
+.auth-mosaic-photo:nth-child(1) { animation: auth-mosaic-shift 18s ease-in-out infinite; }
+.auth-mosaic-photo:nth-child(2) { animation: auth-mosaic-shift-2 18s ease-in-out infinite; }
+.auth-mosaic-photo:nth-child(3) { animation: auth-mosaic-shift-3 18s ease-in-out infinite; }
+
+/* ─── LEAFLET OVERRIDES ─── */
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  font-family: var(--font-body);
+  z-index: 1;
+}
+
+.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.leaflet-pane,
+.leaflet-map-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-tile-container,
+.leaflet-pane > svg,
+.leaflet-pane > canvas,
+.leaflet-zoom-box,
+.leaflet-image-layer,
+.leaflet-layer {
+  position: absolute;
+}
+
+.leaflet-control-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.leaflet-control {
+  pointer-events: auto;
+}
+
+/* ─── SCROLLBAR ─── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--surface-hover); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+/* ─── PRINT ─── */
+@media print {
+  .floating-container, nav, footer { display: none !important; }
+  body { background: white; color: black; }
+}
